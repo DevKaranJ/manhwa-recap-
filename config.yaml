@@ -1,0 +1,44 @@
+llm:
+  provider: openrouter            # openrouter | zenmux | none
+  base_url: https://openrouter.ai/api/v1
+  api_key_env: OPENROUTER_API_KEY # or ZENMUX_API_KEY
+  models: ["deepseek/deepseek-chat", "google/gemini-2.0-flash-exp:free"]
+  temperature: 0.8
+  max_tokens: 8192
+  timeout_sec: 90
+
+tts:
+  engine: edge-tts                # edge-tts | openrouter
+  voice: en-US-ChristopherNeural
+  rate: "+0%"
+  pitch: "-2Hz"
+  openrouter_model: deepgram/flux-tts:free
+
+image:
+  provider: pollinations
+  base_url: https://image.pollinations.ai/prompt
+  width: 1920
+  height: 1080
+  model: flux
+  nologo: true
+  seed: 42
+  timeout_sec: 180
+
+video:
+  fps: 24
+  codec: libx264
+  preset: veryfast
+  crf: 23
+  audio_bitrate: 192k
+  bgm_volume_db: -24
+  duck_db: 10
+  min_scene_sec: 3
+  max_scene_sec: 12
+  burn_subtitles: false
+  font_file: arial.ttf
+
+paths:
+  scripts_dir: workspace/scripts
+  audio_dir: workspace/audio
+  images_dir: workspace/images
+  output_dir: workspace/output
