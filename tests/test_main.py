@@ -77,6 +77,12 @@ def test_apply_cli_overrides_provider_uses_env_key(monkeypatch):
     assert out["llm"]["base_url"] == "https://openrouter.ai/api/v1"
 
 
+def test_apply_cli_overrides_llm_model():
+    cfg = {"llm": {"models": ["model-a", "model-b"]}}
+    out = apply_cli_overrides(cfg, _args(llm_model="custom/model"))
+    assert out["llm"]["models"] == ["custom/model"]
+
+
 def _manifest(n):
     return StoryManifest(
         title="T",
@@ -103,6 +109,7 @@ def _args(**overrides):
         clean=False,
         debug=False,
         provider=None,
+        llm_model=None,
         offline=False,
     )
     defaults.update(overrides)

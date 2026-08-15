@@ -1,6 +1,7 @@
 import time
 from io import BytesIO
 from pathlib import Path
+from urllib.parse import unquote
 
 import pytest
 import requests
@@ -219,3 +220,34 @@ def test_generate_scene_skips_hf_when_no_key(tmp_path, monkeypatch):
 
     result = gen.generate_scene("anime style, desert", 4, out_dir)
     assert result.name == "scene_004_placeholder.png"
+
+
+def test_style_prefix_and_character_applied_to_every_prompt(tmp_path, monkeypatch):
+    cfg = {
+        "image": dict(
+            IMG_CFG,
+            style_prefix="modern chinese manhua art style, urban romance webtoon",
+            character="beautiful pale 24yo woman with long brown hair",
+        ),
+        "paths": {"images_dir": str(tmp_path)},
+    }
+    gen = ImageGenerator(cfg)
+    out_dir = tmp_path / "imgs"
+    seen = []
+
+    def fake_get(url, timeout=None, stream=None):
+        seen.append(unquote(url))
+        return _ImageResponse()
+
+    monkeypatch.setattr("src.image_generator.requests.get", fake_get)
+    monkeypatch.setattr("src.image_generator.time.sleep", lambda s: None)
+
+    gen.generate_scene("kneeling father handing a doll to a child", 1, out_dir)
+    gen.generate_scene("mother sitting on a sofa with tea", 2, out_dir)
+
+    assert len(seen) == 2
+    for url in seen:
+        assert "modern chinese manhua art style, urban romance webtoon" in url
+        assert "beautiful pale 24yo woman with long brown hair" in url
+    assert "kneeling father handing a doll to a child" in seen[0]
+    assert "mother sitting on a sofa with tea" in seen[1]

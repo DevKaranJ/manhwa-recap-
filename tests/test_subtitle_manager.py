@@ -63,9 +63,9 @@ def test_segment_cues_never_mix_and_seg2_starts_on_boundary(two_segment_timing):
     assert seg2_cues, "segment 2 must produce cues"
     assert seg2_cues[0].start == pytest.approx(6.0)
     for cue in seg1_cues:
-        assert not any(t in seg2_terms for t in cue.text.split())
+        assert not any(t.lower() in seg2_terms for t in cue.text.split())
     for cue in seg2_cues:
-        assert all(t in seg2_terms for t in cue.text.split())
+        assert all(t.lower() in seg2_terms for t in cue.text.split())
 
 
 def test_cue_starts_are_ascending(two_segment_timing):
@@ -80,7 +80,25 @@ def test_words_never_split_across_cues(two_segment_timing):
     all_words = set(SEG1_WORDS) | set(SEG2_WORDS)
     for cue in cues:
         for token in cue.text.split():
-            assert token in all_words
+            assert token.lower() in all_words
+
+
+def test_cue_refinement_restores_case_and_punctuation(two_segment_timing):
+    original = {
+        1: "The silent forest whispered secrets beneath the moonlit canopy tonight.",
+        2: "Shadows creeping between branches.",
+    }
+    cues = cues_from_timing(
+        two_segment_timing, max_chars=1000, max_seconds=10.0, text_by_id=original
+    )
+    assert len(cues) == 2
+    assert cues[0].text == "The silent forest whispered secrets beneath the moonlit canopy tonight."
+    assert cues[1].text == "Shadows creeping between branches."
+
+
+def test_cue_refinement_fallback_capitalizes_without_match(two_segment_timing):
+    cues = cues_from_timing(two_segment_timing, max_chars=1000, max_seconds=10.0)
+    assert cues[0].text.startswith("The ") or cues[0].text[0].isupper()
 
 
 def test_empty_words_segment_emits_placeholder_cue():

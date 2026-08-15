@@ -124,14 +124,11 @@ class ImageGenerator:
         except Exception:
             return False
 
-    def _build_url(self, prompt: str, scene_id: int, seed: int) -> str:
-        base = self._image_cfg["base_url"].rstrip("/")
-        nologo = "true" if self._image_cfg.get("nologo", True) else "false"
-        return (
-            f"{base}/{quote(prompt, safe='')}"
-            f"?width={self._image_cfg['width']}&height={self._image_cfg['height']}"
-            f"&model={self._image_cfg['model']}&nologo={nologo}&seed={seed}"
-        )
+    def _final_prompt(self, visual_prompt: str) -> str:
+        style = (self._image_cfg.get("style_prefix") or "").strip()
+        character = (self._image_cfg.get("character") or "").strip()
+        parts = [p for p in (style, visual_prompt.strip(), character) if p]
+        return ", ".join(parts)
 
     def generate_scene(self, visual_prompt: str, scene_id: int, out_dir) -> Path:
         out_dir = Path(out_dir)
@@ -140,6 +137,7 @@ class ImageGenerator:
             return out_path
         out_dir.mkdir(parents=True, exist_ok=True)
 
+        prompt = self._final_prompt(visual_prompt)
         models = [self._image_cfg["model"]] + list(
             self._image_cfg.get("fallback_models", []) or []
         )
@@ -147,7 +145,7 @@ class ImageGenerator:
         for model_index, model in enumerate(models):
             for attempt in range(3):
                 seed = self._image_cfg["seed"] + scene_id + attempt + model_index * 100
-                url = self._build_url(visual_prompt, scene_id, seed, model)
+                url = self._build_url(prompt, scene_id, seed, model)
                 result = self._try_download(url, out_path, scene_id, attempt)
                 if result is not None:
                     return result
@@ -155,12 +153,12 @@ class ImageGenerator:
                     time.sleep(backoffs[attempt])
             log.warning("scene %d: Pollinations model %r failed", scene_id, model)
 
-        hf_result = self._try_huggingface(visual_prompt, scene_id, out_path)
+        hf_result = self._try_huggingface(prompt, scene_id, out_path)
         if hf_result is not None:
             return hf_result
 
         log.warning("scene %d: all image providers failed; using placeholder", scene_id)
-        return generate_placeholder(visual_prompt, scene_id, out_dir)
+        return generate_placeholder(prompt, scene_id, out_dir)
 
     def _build_url(self, prompt: str, scene_id: int, seed: int, model: str) -> str:
         base = self._image_cfg["base_url"].rstrip("/")

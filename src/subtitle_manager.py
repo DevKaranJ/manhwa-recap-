@@ -3,12 +3,36 @@ from pathlib import Path
 from src.models import SegmentTiming, SubtitleCue, TimingData
 
 
+def _refine_cue_text(cue_text: str, original: str) -> str:
+    """Reattach the case and punctuation of the original narration to a word-only cue.
+
+    edge-tts word boundaries strip punctuation and lower-case words, which makes
+    burned subtitles look like raw ASR output. Aligning the cue back to the source
+    sentence restores a polished, captioned look.
+    """
+    needle = " ".join(cue_text.split()).lower()
+    hay = " ".join(original.split())
+    start = hay.lower().find(needle)
+    if start < 0:
+        fallback = " ".join(cue_text.split())
+        return fallback[0].upper() + fallback[1:] if fallback else fallback
+    end = start + len(needle)
+    if end < len(hay) and hay[end] in ".,!?…;:)]}":
+        end += 1
+    return hay[start:end].strip()
+
+
 def cues_from_timing(
-    timing: TimingData, max_chars: int = 42, max_seconds: float = 3.0
+    timing: TimingData,
+    max_chars: int = 42,
+    max_seconds: float = 3.0,
+    text_by_id: dict[int, str] | None = None,
 ) -> list[SubtitleCue]:
+    text_by_id = text_by_id or {}
     cues: list[SubtitleCue] = []
     segment_start = 0.0
     for seg in timing.segments:
+        original = text_by_id.get(seg.segment_id, "")
         if not seg.words:
             cues.append(SubtitleCue(segment_start, segment_start + seg.duration_sec, "…"))
             segment_start += seg.duration_sec
@@ -21,7 +45,11 @@ def cues_from_timing(
             would_exceed_time = bool(group) and word.end - group_start > max_seconds
             if would_exceed_chars or would_exceed_time:
                 cues.append(
-                    SubtitleCue(group[0].start, group[-1].end, " ".join(w.word for w in group))
+                    SubtitleCue(
+                        group[0].start,
+                        group[-1].end,
+                        _refine_cue_text(" ".join(w.word for w in group), original),
+                    )
                 )
                 group = [word]
                 group_start = word.start
@@ -29,7 +57,11 @@ def cues_from_timing(
                 group.append(word)
         if group:
             cues.append(
-                SubtitleCue(group[0].start, group[-1].end, " ".join(w.word for w in group))
+                SubtitleCue(
+                    group[0].start,
+                    group[-1].end,
+                    _refine_cue_text(" ".join(w.word for w in group), original),
+                )
             )
         cues[-1].end = max(cues[-1].end, segment_start + seg.duration_sec)
         segment_start += seg.duration_sec
@@ -37,10 +69,13 @@ def cues_from_timing(
 
 
 def build_srt(
-    timing: TimingData, max_chars: int = 42, max_seconds: float = 3.0
+    timing: TimingData,
+    max_chars: int = 42,
+    max_seconds: float = 3.0,
+    text_by_id: dict[int, str] | None = None,
 ) -> str:
     if hasattr(timing, "segments"):
-        cues = cues_from_timing(timing, max_chars, max_seconds)
+        cues = cues_from_timing(timing, max_chars, max_seconds, text_by_id)
     else:
         cues = list(timing)
     blocks = []
@@ -49,9 +84,9 @@ def build_srt(
     return "\n\n".join(blocks) + "\n"
 
 
-def write_srt(timing: TimingData, out_path) -> Path:
+def write_srt(timing: TimingData, out_path, text_by_id: dict[int, str] | None = None) -> Path:
     out_path = Path(out_path)
-    out_path.write_text(build_srt(timing), encoding="utf-8")
+    out_path.write_text(build_srt(timing, text_by_id=text_by_id), encoding="utf-8")
     return out_path
 
 

@@ -2,7 +2,7 @@ llm:
   provider: openrouter            # openrouter | zenmux | none
   base_url: https://openrouter.ai/api/v1
   api_key_env: OPENROUTER_API_KEY # or ZENMUX_API_KEY
-  models: ["deepseek/deepseek-chat", "google/gemini-2.0-flash-exp:free"]
+  models: ["google/gemma-4-31b-it:free", "openai/gpt-oss-20b:free", "nvidia/nemotron-3-super-120b-a12b:free"]
   temperature: 0.8
   max_tokens: 8192
   timeout_sec: 90
@@ -26,6 +26,10 @@ image:
   nologo: true
   seed: 42
   timeout_sec: 180
+  # prepended to EVERY scene prompt so all frames share one consistent art style
+  style_prefix: "modern chinese manhua art style, urban romance webtoon, semi-realistic 2D anime illustration, soft cel shading, delicate expressive faces, warm cinematic interior lighting, gentle amber glow, emotional atmosphere, high detail, 8k resolution, clean line art"
+  # appended to EVERY scene prompt so the protagonist looks the same across scenes
+  character: "beautiful pale 24yo woman with long brown hair, teary almond eyes, faint blush, delicate features"
   hf_base_url: https://api-inference.huggingface.co
   hf_model: black-forest-labs/FLUX.1-schnell
   hf_api_key_env: HF_API_KEY      # optional; enables Hugging Face Serverless fallback

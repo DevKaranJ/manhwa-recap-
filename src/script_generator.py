@@ -197,11 +197,13 @@ class ScriptGenerator:
                 except (_RetryableError, requests.RequestException) as exc:
                     last_error = str(exc)
                     if delay_index >= len(retry_delays):
+                        log.warning("LLM model %r failed after retries: %s", model, last_error)
                         break
                     time.sleep(retry_delays[delay_index])
                     delay_index += 1
                 except Exception as exc:
                     last_error = str(exc)
+                    log.warning("LLM model %r failed: %s", model, last_error)
                     break
         raise ScriptGenerationError(
             f"LLM script generation failed after trying all models: {last_error}"

@@ -79,6 +79,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="override the LLM provider from config.yaml",
     )
     parser.add_argument(
+        "--llm-model",
+        default=None,
+        help="use this specific LLM model (overrides config.yaml llm.models list)",
+    )
+    parser.add_argument(
         "--offline",
         action="store_true",
         help="force deterministic generation; make no LLM API calls",
@@ -134,6 +139,9 @@ def apply_cli_overrides(cfg: dict, args: argparse.Namespace) -> dict:
         cfg["llm"]["api_key"] = os.environ.get(cfg["llm"]["api_key_env"], "")
     if args.burn_subtitles:
         cfg["video"]["burn_subtitles"] = True
+    if args.llm_model:
+        cfg["llm"]["models"] = [args.llm_model]
+        log.info("using LLM model override: %s", args.llm_model)
     return cfg
 
 
@@ -202,7 +210,8 @@ def run_pipeline(args: argparse.Namespace, cfg: dict) -> Path | None:
     log.info("scene images ready: %d", len(images))
 
     srt_path = Path(cfg["paths"]["output_dir"]) / "subtitles.srt"
-    write_srt(timing, srt_path)
+    text_by_id = {seg.id: seg.text for seg in manifest.segments}
+    write_srt(timing, srt_path, text_by_id=text_by_id)
     log.info("subtitles written: %s", srt_path)
 
     if args.skip_render:
