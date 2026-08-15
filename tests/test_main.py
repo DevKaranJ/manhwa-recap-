@@ -3,7 +3,15 @@ from pathlib import Path
 
 from src.models import Segment, StoryManifest
 
-from main import apply_cli_overrides, clean_workspace, load_source, truncate_to_budget
+from main import (
+    _chunk_text,
+    _merge_manifests,
+    apply_character_hints,
+    apply_cli_overrides,
+    clean_workspace,
+    load_source,
+    truncate_to_budget,
+)
 
 
 def test_load_source_file(tmp_path):
@@ -81,6 +89,44 @@ def test_apply_cli_overrides_llm_model():
     cfg = {"llm": {"models": ["model-a", "model-b"]}}
     out = apply_cli_overrides(cfg, _args(llm_model="custom/model"))
     assert out["llm"]["models"] == ["custom/model"]
+
+
+def test_chunk_text_splits_long_story():
+    paragraphs = [f"Paragraph {i} " + "word " * 60 for i in range(20)]
+    text = "\n".join(paragraphs)
+    chunks = _chunk_text(text, max_chars=500)
+    assert len(chunks) > 1
+    assert all(len(c) <= 510 for c in chunks)
+    assert " ".join("\n".join(chunks).split()) == " ".join(text.split())
+
+
+def test_chunk_text_short_story_single_chunk():
+    assert _chunk_text("Short story here.") == ["Short story here."]
+
+
+def test_merge_manifests_renumbers_and_keeps_title():
+    m1 = StoryManifest(title="A", premise="p1", segments=[Segment(id=1, text="x"), Segment(id=2, text="y")])
+    m2 = StoryManifest(title="B", premise="p2", segments=[Segment(id=1, text="z")])
+    merged = _merge_manifests([m1, m2], title="Final")
+    assert merged.title == "Final"
+    assert [s.id for s in merged.segments] == [1, 2, 3]
+    assert merged.meta["chunks"] == "2"
+
+
+def test_apply_character_hints_appends_matching_character():
+    manifest = StoryManifest(
+        title="t",
+        premise="p",
+        segments=[
+            Segment(id=1, text="Kael drew his sword", visual_prompt="knight in a courtyard")
+        ],
+    )
+    apply_character_hints(
+        manifest,
+        {"Kael": "silver-haired knight", "Mira": "brown-haired woman"},
+    )
+    assert "Kael: silver-haired knight" in manifest.segments[0].visual_prompt
+    assert "Mira" not in manifest.segments[0].visual_prompt
 
 
 def _manifest(n):

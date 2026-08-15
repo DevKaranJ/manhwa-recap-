@@ -31,7 +31,7 @@ def two_segment_timing():
         seg1_words.append(_word(w, i * 0.6, i * 0.6 + 0.6))
     seg2_words = []
     for i, w in enumerate(SEG2_WORDS):
-        seg2_words.append(_word(w, 6.0 + i * 0.5, 6.0 + i * 0.5 + 0.4))
+        seg2_words.append(_word(w, i * 0.5, i * 0.5 + 0.4))
     return TimingData(
         segments=[
             SegmentTiming(
@@ -99,6 +99,30 @@ def test_cue_refinement_restores_case_and_punctuation(two_segment_timing):
 def test_cue_refinement_fallback_capitalizes_without_match(two_segment_timing):
     cues = cues_from_timing(two_segment_timing, max_chars=1000, max_seconds=10.0)
     assert cues[0].text.startswith("The ") or cues[0].text[0].isupper()
+
+
+def test_relative_word_timings_are_offset_to_global_timeline(two_segment_timing):
+    cues = cues_from_timing(two_segment_timing, max_chars=1000, max_seconds=10.0)
+    assert len(cues) == 2
+    assert cues[0].start == pytest.approx(0.0)
+    assert cues[0].end == pytest.approx(6.0)
+    assert cues[1].start == pytest.approx(6.0)
+    assert cues[1].end == pytest.approx(10.0)
+
+
+def test_no_cue_overlaps_even_when_segments_crowded():
+    seg1_words = [_word("a", i * 0.5, i * 0.5 + 0.3) for i in range(3)]
+    seg2_words = [_word("b", i * 0.5, i * 0.5 + 0.3) for i in range(3)]
+    timing = TimingData(
+        segments=[
+            SegmentTiming(segment_id=1, audio_path="s1.mp3", duration_sec=1.5, words=seg1_words),
+            SegmentTiming(segment_id=2, audio_path="s2.mp3", duration_sec=1.5, words=seg2_words),
+        ],
+        total_duration_sec=3.0,
+    )
+    cues = cues_from_timing(timing, max_chars=1000, max_seconds=10.0)
+    for i in range(len(cues) - 1):
+        assert cues[i].end <= cues[i + 1].start + 1e-9
 
 
 def test_empty_words_segment_emits_placeholder_cue():

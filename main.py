@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import logging
 import os
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -11,8 +12,13 @@ from pathlib import Path
 from src.config import ConfigError, load_config
 from src.image_generator import ImageGenerator
 from src.logging_setup import get_logger, set_verbose, setup_logging
-from src.models import StoryManifest
-from src.script_generator import ScriptGenerationError, ScriptGenerator, save_manifest
+from src.models import Segment, StoryManifest
+from src.script_generator import (
+    ScriptGenerationError,
+    ScriptGenerator,
+    build_deterministic_manifest,
+    save_manifest,
+)
 from src.subtitle_manager import write_srt
 from src.tts_engine import TtsEngine
 from src.video_assembler import RenderError, VideoAssembler
@@ -30,7 +36,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         description="Turn a story prompt or raw web-novel text into a 1080p anime "
         "audio-drama MP4 with narration, Ken Burns scenes, ducked BGM and SRT subtitles.",
     )
-    source = parser.add_mutually_exclusive_group(required=True)
+    source = parser.add_mutually_exclusive_group()
     source.add_argument("--prompt", help="high-level plot prompt to dramatize")
     source.add_argument("--file", help="path to a raw novel/story text file")
     parser.add_argument("--title", default=None, help="title override for the video")
@@ -147,15 +153,74 @@ def apply_cli_overrides(cfg: dict, args: argparse.Namespace) -> dict:
 
 def generate_manifest(cfg: dict, source: str, mode: str, title: str | None) -> StoryManifest:
     generator = ScriptGenerator(cfg)
-    try:
-        if mode == "prompt":
-            return generator.generate_from_prompt(source, title)
-        return generator.generate_from_text(source, title)
-    except ScriptGenerationError as exc:
-        log.warning("LLM generation unavailable, using deterministic path: %s", exc)
-        from src.script_generator import build_deterministic_manifest
 
-        return build_deterministic_manifest(source, title)
+    def _generate_one(text: str) -> StoryManifest:
+        try:
+            if mode == "prompt":
+                return generator.generate_from_prompt(source, title)
+            return generator.generate_from_text(text, title)
+        except ScriptGenerationError as exc:
+            log.warning("LLM generation unavailable, using deterministic path: %s", exc)
+            return build_deterministic_manifest(text, title)
+
+    if mode == "text":
+        chunks = _chunk_text(source)
+        if len(chunks) > 1:
+            log.info("story too long for one call: splitting into %d chunks", len(chunks))
+            manifests = [_generate_one(chunk) for chunk in chunks]
+            return _merge_manifests(manifests, title)
+    return _generate_one(source)
+
+
+def _chunk_text(text: str, max_chars: int = 3500) -> list[str]:
+    paragraphs = [p.strip() for p in re.split(r"\n+", text) if p.strip()]
+    if not paragraphs:
+        return [text]
+    chunks: list[str] = []
+    current = ""
+    for para in paragraphs:
+        if current and len(current) + len(para) + 1 > max_chars:
+            chunks.append(current)
+            current = para
+        else:
+            current = f"{current}\n{para}" if current else para
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+def _merge_manifests(manifests: list[StoryManifest], title: str | None) -> StoryManifest:
+    segments: list[Segment] = []
+    next_id = 1
+    premises = []
+    for manifest in manifests:
+        for seg in manifest.segments:
+            seg.id = next_id
+            next_id += 1
+            segments.append(seg)
+        if manifest.premise:
+            premises.append(manifest.premise)
+    merged_title = title or (manifests[0].title if manifests else "Untitled")
+    return StoryManifest(
+        title=merged_title,
+        premise="\n".join(premises),
+        segments=segments,
+        meta={"chunks": str(len(manifests))},
+    )
+
+
+def apply_character_hints(manifest: StoryManifest, characters: dict[str, str] | None) -> None:
+    """Append descriptions of any characters mentioned in a scene's text/prompt
+    so recurring characters keep the same look across every scene."""
+    characters = characters or {}
+    for seg in manifest.segments:
+        hints = []
+        text_l = f"{seg.text}\n{seg.visual_prompt}".lower()
+        for name, description in characters.items():
+            if name.lower() in text_l:
+                hints.append(f"{name}: {description}")
+        if hints:
+            seg.visual_prompt = f"{seg.visual_prompt}, {('; '.join(hints))}".strip(", ")
 
 
 def truncate_to_budget(manifest: StoryManifest, max_minutes: float | None) -> StoryManifest:
@@ -203,6 +268,7 @@ def run_pipeline(args: argparse.Namespace, cfg: dict) -> Path | None:
 
     images_dir = Path(cfg["paths"]["images_dir"])
     image_gen = ImageGenerator(cfg)
+    apply_character_hints(manifest, cfg["image"].get("characters"))
     images = []
     for seg in manifest.segments:
         path = image_gen.generate_scene(seg.visual_prompt, seg.id, images_dir)
@@ -255,6 +321,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.clean:
             clean_workspace(cfg)
             return EXIT_OK
+        if not args.prompt and not args.file:
+            _input_error("provide either --prompt or --file")
         result = run_pipeline(args, cfg)
     except ConfigError as exc:
         log.error("configuration error: %s", exc)

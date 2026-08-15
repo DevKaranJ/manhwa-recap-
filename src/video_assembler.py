@@ -194,13 +194,16 @@ class VideoAssembler:
         bgm_path = Path(bgm) if bgm is not None else None
         if bgm_path is not None and bgm_path.exists():
             if self._has_audio(full):
+                # Normalize narration loudness first so it is clearly audible on
+                # any device, then duck the BGM against it and remix.
                 fc = (
+                    f"[0:a]loudnorm=I=-16:TP=-1.5:LRA=11[voice];"
                     f"[1:a]volume={v['bgm_volume_db']}dB,"
                     f"atrim=0:{_num(total_duration)}[bg];"
-                    "[bg][0:a]sidechaincompress=threshold=0.03:ratio=8:"
-                    "attack=100:release=400[duck];"
-                    "[duck][0:a]amix=inputs=2:duration=first:"
-                    "dropout_transition=0[a]"
+                    f"[bg][voice]sidechaincompress=threshold=0.03:ratio=8:"
+                    f"attack=100:release=400[duck];"
+                    f"[voice][duck]amix=inputs=2:duration=first:"
+                    f"dropout_transition=0[a]"
                 )
             else:
                 # No narration audio to duck against, so just mix BGM alone.
@@ -232,6 +235,7 @@ class VideoAssembler:
                 "ffmpeg", "-y", "-i", str(full),
                 "-map", "0:v", "-map", "0:a?",
                 "-vf", subtitles_vf,
+                "-af", "loudnorm=I=-16:TP=-1.5:LRA=11",
                 "-c:v", v["codec"], "-preset", v["preset"],
                 "-crf", str(v["crf"]), "-pix_fmt", "yuv420p",
                 "-c:a", "aac", "-b:a", str(v["audio_bitrate"]), "-ac", "2",
@@ -293,9 +297,15 @@ class VideoAssembler:
         fontsdir, style_font = self._resolve_font_assets()
         if fontsdir is not None:
             parts.append(f"fontsdir={val(fontsdir)}")
-        parts.append(
-            f"force_style='FontName={style_font},FontSize=20,Outline=1,Shadow=1'"
+        style = (
+            f"FontName={style_font},"
+            f"FontSize={self.video.get('subtitle_font_size', 24)},"
+            f"Outline={self.video.get('subtitle_outline', 2)},"
+            f"Shadow={self.video.get('subtitle_shadow', 1)},"
+            f"MarginV={self.video.get('subtitle_margin_v', 40)},"
+            f"Alignment=2"
         )
+        parts.append(f"force_style='{style}'")
         return ":".join(parts)
 
     @staticmethod

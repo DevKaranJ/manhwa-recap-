@@ -30,6 +30,12 @@ image:
   style_prefix: "modern chinese manhua art style, urban romance webtoon, semi-realistic 2D anime illustration, soft cel shading, delicate expressive faces, warm cinematic interior lighting, gentle amber glow, emotional atmosphere, high detail, 8k resolution, clean line art"
   # appended to EVERY scene prompt so the protagonist looks the same across scenes
   character: "beautiful pale 24yo woman with long brown hair, teary almond eyes, faint blush, delicate features"
+  # recurring character sheets; when a scene's text mentions a name, that
+  # character's description is appended so they stay consistent across scenes
+  characters:
+    "Kael": "tall knight with silver-white hair, cold grey eyes, black and gold armor"
+    "Mira": "the villainess, beautiful pale 24yo woman with long brown hair, teary almond eyes, faint blush, elegant black dress"
+    "Rowan": "young mage with messy chestnut hair, green eyes, dark green hooded robe"
   hf_base_url: https://api-inference.huggingface.co
   hf_model: black-forest-labs/FLUX.1-schnell
   hf_api_key_env: HF_API_KEY      # optional; enables Hugging Face Serverless fallback
@@ -37,8 +43,8 @@ image:
 video:
   fps: 24
   codec: libx264
-  preset: veryfast
-  crf: 23
+  preset: medium
+  crf: 18
   audio_bitrate: 192k
   bgm_volume_db: -24
   duck_db: 10
@@ -46,6 +52,10 @@ video:
   max_scene_sec: 60               # safety cap only; narration drives scene length
   burn_subtitles: false
   font_file: arial.ttf
+  subtitle_font_size: 24
+  subtitle_outline: 2
+  subtitle_shadow: 1
+  subtitle_margin_v: 40
 
 paths:
   scripts_dir: workspace/scripts

@@ -28,10 +28,17 @@ def cues_from_timing(
     max_seconds: float = 3.0,
     text_by_id: dict[int, str] | None = None,
 ) -> list[SubtitleCue]:
+    """Build caption cues from per-segment word timings.
+
+    edge-tts word timestamps are relative to each segment's own audio (each
+    segment restarts at 0.0s), so every cue is offset by the accumulated
+    `segment_start` to land on the global video timeline.
+    """
     text_by_id = text_by_id or {}
     cues: list[SubtitleCue] = []
     segment_start = 0.0
     for seg in timing.segments:
+        offset = segment_start
         original = text_by_id.get(seg.segment_id, "")
         if not seg.words:
             cues.append(SubtitleCue(segment_start, segment_start + seg.duration_sec, "…"))
@@ -46,8 +53,8 @@ def cues_from_timing(
             if would_exceed_chars or would_exceed_time:
                 cues.append(
                     SubtitleCue(
-                        group[0].start,
-                        group[-1].end,
+                        group[0].start + offset,
+                        group[-1].end + offset,
                         _refine_cue_text(" ".join(w.word for w in group), original),
                     )
                 )
@@ -58,13 +65,17 @@ def cues_from_timing(
         if group:
             cues.append(
                 SubtitleCue(
-                    group[0].start,
-                    group[-1].end,
+                    group[0].start + offset,
+                    group[-1].end + offset,
                     _refine_cue_text(" ".join(w.word for w in group), original),
                 )
             )
         cues[-1].end = max(cues[-1].end, segment_start + seg.duration_sec)
         segment_start += seg.duration_sec
+
+    for i in range(len(cues) - 1):
+        if cues[i].end > cues[i + 1].start:
+            cues[i].end = max(cues[i].start, cues[i + 1].start - 0.01)
     return cues
 
 
