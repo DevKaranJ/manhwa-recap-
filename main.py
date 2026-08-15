@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import logging
+import os
+import shutil
 import sys
 from pathlib import Path
 
 from src.config import ConfigError, load_config
 from src.image_generator import ImageGenerator
-from src.logging_setup import get_logger, setup_logging
+from src.logging_setup import get_logger, set_verbose, setup_logging
 from src.models import StoryManifest
 from src.script_generator import ScriptGenerationError, ScriptGenerator, save_manifest
 from src.subtitle_manager import write_srt
@@ -50,9 +53,24 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="run script/audio/images/subtitles but skip ffmpeg rendering",
     )
     parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="alias for --skip-render: full pipeline up to (not including) rendering",
+    )
+    parser.add_argument(
         "--keep-temp",
         action="store_true",
         help="keep intermediate scene clips after rendering",
+    )
+    parser.add_argument(
+        "--clean",
+        action="store_true",
+        help="wipe all generated workspace artifacts (scripts/audio/images/output) and exit",
+    )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="enable debug-level logging",
     )
     parser.add_argument(
         "--provider",
@@ -68,18 +86,38 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def load_source(args: argparse.Namespace) -> tuple[str, str | None]:
+def load_source(args: argparse.Namespace) -> tuple[str, str]:
     if args.prompt:
         return args.prompt, "prompt"
     if args.file:
         path = Path(args.file)
         if not path.exists():
-            raise SystemExit(f"input file not found: {path}")
+            _input_error(f"input file not found: {path}")
         try:
             return path.read_text(encoding="utf-8"), "text"
         except (OSError, UnicodeDecodeError) as exc:
-            raise SystemExit(f"could not read {path}: {exc}")
-    raise SystemExit("provide either --prompt or --file")
+            _input_error(f"could not read {path}: {exc}")
+    _input_error("provide either --prompt or --file")
+    raise SystemExit(EXIT_INPUT)
+
+
+def _input_error(message: str) -> None:
+    print(f"error: {message}", file=sys.stderr)
+    raise SystemExit(EXIT_INPUT)
+
+
+def clean_workspace(cfg: dict) -> None:
+    removed = 0
+    for key in ("scripts_dir", "audio_dir", "images_dir", "output_dir"):
+        path = Path(cfg["paths"][key])
+        if path.exists():
+            for item in path.iterdir():
+                if item.is_dir():
+                    shutil.rmtree(item, ignore_errors=True)
+                else:
+                    item.unlink(missing_ok=True)
+                removed += 1
+    log.info("cleaned %d workspace artifacts", removed)
 
 
 def apply_cli_overrides(cfg: dict, args: argparse.Namespace) -> dict:
@@ -88,21 +126,12 @@ def apply_cli_overrides(cfg: dict, args: argparse.Namespace) -> dict:
     elif args.provider:
         cfg["llm"]["provider"] = args.provider
         if args.provider == "zenmux":
-            import os
-
-            from dotenv import load_dotenv
-
-            load_dotenv(Path(__file__).resolve().parent / ".env")
             cfg["llm"]["base_url"] = "https://zenmux.com/v1"
-            cfg["llm"]["api_key"] = os.environ.get("ZENMUX_API_KEY", "")
+            cfg["llm"]["api_key_env"] = "ZENMUX_API_KEY"
         else:
-            import os
-
-            from dotenv import load_dotenv
-
-            load_dotenv(Path(__file__).resolve().parent / ".env")
             cfg["llm"]["base_url"] = "https://openrouter.ai/api/v1"
-            cfg["llm"]["api_key"] = os.environ.get("OPENROUTER_API_KEY", "")
+            cfg["llm"]["api_key_env"] = "OPENROUTER_API_KEY"
+        cfg["llm"]["api_key"] = os.environ.get(cfg["llm"]["api_key_env"], "")
     if args.burn_subtitles:
         cfg["video"]["burn_subtitles"] = True
     return cfg
@@ -145,8 +174,7 @@ def truncate_to_budget(manifest: StoryManifest, max_minutes: float | None) -> St
     return manifest
 
 
-def run_pipeline(args: argparse.Namespace) -> Path | None:
-    cfg = load_config()
+def run_pipeline(args: argparse.Namespace, cfg: dict) -> Path | None:
     cfg = apply_cli_overrides(cfg, args)
 
     source, mode = load_source(args)
@@ -196,15 +224,29 @@ def run_pipeline(args: argparse.Namespace) -> Path | None:
     assembler.keep_temp = args.keep_temp
     log.info("rendering video (this can take a while)...")
     result = assembler.render(images, timing, bgm, srt_path, output)
-    log.info("render complete: %s", result)
+    size_mb = result.stat().st_size / (1024 * 1024)
+    log.info(
+        "render complete: %s (%.2f MB, %.1fs narration)",
+        result,
+        size_mb,
+        timing.total_duration_sec,
+    )
     return result
 
 
 def main(argv: list[str] | None = None) -> int:
     setup_logging()
     args = parse_args(argv)
+    if args.debug:
+        set_verbose(logging.DEBUG)
+    if args.dry_run:
+        args.skip_render = True
     try:
-        result = run_pipeline(args)
+        cfg = load_config()
+        if args.clean:
+            clean_workspace(cfg)
+            return EXIT_OK
+        result = run_pipeline(args, cfg)
     except ConfigError as exc:
         log.error("configuration error: %s", exc)
         return EXIT_FATAL

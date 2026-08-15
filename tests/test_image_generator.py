@@ -1,4 +1,5 @@
 import time
+from io import BytesIO
 from pathlib import Path
 
 import pytest
@@ -17,6 +18,27 @@ IMG_CFG = {
     "seed": 42,
     "timeout_sec": 180,
 }
+
+
+def _png_bytes() -> bytes:
+    buf = BytesIO()
+    Image.new("RGB", (64, 64), (1, 2, 3)).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+class _ImageResponse:
+    status_code = 200
+    headers = {"Content-Type": "image/png"}
+    raw = BytesIO(_png_bytes())
+
+    def __init__(self):
+        self.raw = BytesIO(_png_bytes())
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
 
 
 @pytest.fixture
@@ -112,3 +134,88 @@ def test_generate_scene_falls_back_to_placeholder_on_network_failure(tmp_path, c
     with Image.open(result) as im:
         assert im.size == (1920, 1080)
         assert im.mode == "RGB"
+
+
+def test_generate_scene_tries_secondary_pollinations_model(tmp_path, monkeypatch):
+    cfg = {"image": dict(IMG_CFG, fallback_models=["turbo"]), "paths": {"images_dir": str(tmp_path)}}
+    gen = ImageGenerator(cfg)
+    out_dir = tmp_path / "imgs"
+
+    seen = []
+
+    def fake_get(url, timeout=None, stream=None):
+        seen.append(url)
+        if "model=flux" in url:
+            raise requests.ConnectionError("primary model down")
+        return _ImageResponse()
+
+    monkeypatch.setattr("src.image_generator.requests.get", fake_get)
+    monkeypatch.setattr("src.image_generator.time.sleep", lambda s: None)
+
+    result = gen.generate_scene("anime style, neon city", 1, out_dir)
+
+    assert result.name == "scene_001.png"
+    assert result.exists()
+    assert any("model=flux" in u for u in seen)
+    assert any("model=turbo" in u for u in seen)
+    with Image.open(result) as im:
+        assert im.size == (1920, 1080)
+
+
+def test_generate_scene_uses_huggingface_fallback_when_key_present(tmp_path, monkeypatch):
+    cfg = {
+        "image": dict(
+            IMG_CFG,
+            hf_api_key="hf-test-key",
+            hf_base_url="https://api.test",
+            hf_model="org/model",
+        ),
+        "paths": {"images_dir": str(tmp_path)},
+    }
+    gen = ImageGenerator(cfg)
+    out_dir = tmp_path / "imgs"
+
+    def conn_error(*args, **kwargs):
+        raise requests.ConnectionError("pollinations down")
+
+    monkeypatch.setattr("src.image_generator.requests.get", conn_error)
+    monkeypatch.setattr("src.image_generator.time.sleep", lambda s: None)
+
+    captured = {}
+
+    def fake_post(url, headers=None, json=None, timeout=None, stream=None):
+        captured["url"] = url
+        captured["headers"] = headers
+        captured["json"] = json
+        return _ImageResponse()
+
+    monkeypatch.setattr("src.image_generator.requests.post", fake_post)
+
+    result = gen.generate_scene("anime style, cherry blossom rain", 3, out_dir)
+
+    assert result.name == "scene_003.png"
+    assert result.exists()
+    assert captured["url"] == "https://api.test/models/org/model"
+    assert captured["headers"]["Authorization"] == "Bearer hf-test-key"
+    assert "inputs" in captured["json"]
+    with Image.open(result) as im:
+        assert im.size == (1920, 1080)
+
+
+def test_generate_scene_skips_hf_when_no_key(tmp_path, monkeypatch):
+    gen = ImageGenerator({"image": dict(IMG_CFG), "paths": {"images_dir": str(tmp_path)}})
+    out_dir = tmp_path / "imgs"
+
+    def conn_error(*args, **kwargs):
+        raise requests.ConnectionError("down")
+
+    monkeypatch.setattr("src.image_generator.requests.get", conn_error)
+    monkeypatch.setattr("src.image_generator.time.sleep", lambda s: None)
+
+    def boom(*args, **kwargs):
+        raise AssertionError("HF must not be contacted without a key")
+
+    monkeypatch.setattr("src.image_generator.requests.post", boom)
+
+    result = gen.generate_scene("anime style, desert", 4, out_dir)
+    assert result.name == "scene_004_placeholder.png"

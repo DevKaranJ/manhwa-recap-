@@ -122,6 +122,20 @@ class TestRender:
         with pytest.raises(RenderError):
             asm.render([], timing, bgm=None, srt=None, out_path=tmp_path / "out.mp4")
 
+    def test_validate_output_rejects_non_video(self, tmp_path):
+        asm = VideoAssembler(_make_cfg(tmp_path))
+        bad = tmp_path / "bad.mp4"
+        bad.write_bytes(b"this is definitely not a video file")
+        with pytest.raises(RenderError):
+            asm._validate_output(bad)
+
+    def test_validate_output_rejects_zero_byte(self, tmp_path):
+        asm = VideoAssembler(_make_cfg(tmp_path))
+        empty = tmp_path / "empty.mp4"
+        empty.write_bytes(b"")
+        with pytest.raises(RenderError):
+            asm._validate_output(empty)
+
     def test_render_with_burned_subtitles(self, tmp_path):
         cfg = _make_cfg(tmp_path)
         cfg["video"]["burn_subtitles"] = True

@@ -90,6 +90,16 @@ def test_default_visual_prompt_mentions_title_and_anime():
     assert "Blade of Dawn" in vp
 
 
+def test_default_visual_prompt_truncated_to_bounded_length():
+    long_text = " ".join(f"keyword{i}" for i in range(120))
+    vp = default_visual_prompt(long_text, "Long Title")
+    assert "anime" in vp.lower()
+    assert len(vp) <= 320
+    assert "keyword0" in vp
+    assert "keyword119" not in vp
+    assert "…" in vp
+
+
 # ---------------------------------------------------------------------------
 # LLM gating
 # ---------------------------------------------------------------------------
@@ -191,6 +201,28 @@ def test_retries_on_5xx_then_succeeds(monkeypatch):
         calls["n"] += 1
         if calls["n"] < 3:
             return FakeResponse(502, {})
+        return ok_response(payload)
+
+    monkeypatch.setattr(sg.requests, "post", fake_post)
+    cfg = cfg_for(provider="openrouter", api_key="sk-test")
+    cfg["llm"]["retry_delays"] = [0.0, 0.0]
+    manifest = ScriptGenerator(cfg).generate_from_text("x")
+    assert calls["n"] == 3
+    assert manifest.title == "T"
+
+
+def test_retries_on_429_then_succeeds(monkeypatch):
+    payload = {
+        "title": "T",
+        "premise": "P",
+        "segments": [{"id": 1, "text": "ok", "est_duration_sec": 6.0}],
+    }
+    calls = {"n": 0}
+
+    def fake_post(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            return FakeResponse(429, {})
         return ok_response(payload)
 
     monkeypatch.setattr(sg.requests, "post", fake_post)

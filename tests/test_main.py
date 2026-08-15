@@ -1,8 +1,9 @@
+import pytest
 from pathlib import Path
 
 from src.models import Segment, StoryManifest
 
-from main import apply_cli_overrides, load_source, truncate_to_budget
+from main import apply_cli_overrides, clean_workspace, load_source, truncate_to_budget
 
 
 def test_load_source_file(tmp_path):
@@ -13,11 +14,29 @@ def test_load_source_file(tmp_path):
     assert source == "The ashes fell like snow."
 
 
-def test_load_source_missing_file_exits():
-    import pytest
-
-    with pytest.raises(SystemExit):
+def test_load_source_missing_file_exits_with_input_code():
+    with pytest.raises(SystemExit) as exc_info:
         load_source(_args(file="does_not_exist.txt"))
+    assert exc_info.value.code == 2
+
+
+def test_clean_workspace_removes_artifacts(tmp_path):
+    cfg = {
+        "paths": {
+            "scripts_dir": str(tmp_path / "scripts"),
+            "audio_dir": str(tmp_path / "audio"),
+            "images_dir": str(tmp_path / "images"),
+            "output_dir": str(tmp_path / "output"),
+        }
+    }
+    for key in ("scripts_dir", "audio_dir", "images_dir", "output_dir"):
+        d = Path(cfg["paths"][key])
+        d.mkdir(parents=True)
+        (d / "artifact.bin").write_bytes(b"x")
+    clean_workspace(cfg)
+    for key in ("scripts_dir", "audio_dir", "images_dir", "output_dir"):
+        d = Path(cfg["paths"][key])
+        assert list(d.iterdir()) == []
 
 
 def test_truncate_to_budget_none_keeps_all():
@@ -50,6 +69,14 @@ def test_apply_cli_overrides_burn():
     assert out["video"]["burn_subtitles"] is True
 
 
+def test_apply_cli_overrides_provider_uses_env_key(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "env-key")
+    cfg = {"llm": {"provider": "openrouter", "base_url": "x", "api_key": "old"}}
+    out = apply_cli_overrides(cfg, _args(provider="openrouter"))
+    assert out["llm"]["api_key"] == "env-key"
+    assert out["llm"]["base_url"] == "https://openrouter.ai/api/v1"
+
+
 def _manifest(n):
     return StoryManifest(
         title="T",
@@ -71,7 +98,10 @@ def _args(**overrides):
         max_minutes=None,
         burn_subtitles=False,
         skip_render=False,
+        dry_run=False,
         keep_temp=False,
+        clean=False,
+        debug=False,
         provider=None,
         offline=False,
     )

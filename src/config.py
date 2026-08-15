@@ -33,13 +33,15 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
 
 def _resolve_api_key(cfg: dict[str, Any]) -> dict[str, Any]:
     env_name = cfg.get("llm", {}).get("api_key_env", "OPENROUTER_API_KEY")
-    key = os.environ.get(env_name, "")
-    cfg.setdefault("llm", {})["api_key"] = key
+    cfg.setdefault("llm", {})["api_key"] = os.environ.get(env_name, "")
     if cfg.get("llm", {}).get("provider") not in ("openrouter", "zenmux"):
         cfg["llm"]["api_key"] = ""
     if cfg.get("llm", {}).get("provider") == "zenmux":
         cfg["llm"]["base_url"] = "https://zenmux.com/v1"
         cfg["llm"]["api_key_env"] = "ZENMUX_API_KEY"
+    img = cfg.setdefault("image", {})
+    hf_env = img.get("hf_api_key_env", "HF_API_KEY")
+    img["hf_api_key"] = os.environ.get(hf_env, "")
     return cfg
 
 

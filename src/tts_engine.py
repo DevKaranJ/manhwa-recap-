@@ -45,7 +45,7 @@ def word_tokens_from_boundaries(boundaries: list[dict]) -> list[WordToken]:
 
 
 def _estimate_duration(text: str) -> float:
-    return max(1.0, min(len(text.split()) * 0.18, 12.0))
+    return max(1.0, min(len(text.split()) * 0.30, 12.0))
 
 
 def _stream_audio(communicate):
@@ -82,9 +82,10 @@ class TtsEngine:
                     "segment %d tts failed after retries; writing ~1s silence fallback",
                     segment.id,
                 )
-                audio = self._silence_mp3(audio_path)
-                boundaries = []
+                audio = self._silence_mp3()
             audio_path.write_bytes(audio)
+            if audio_path.stat().st_size == 0:
+                log.warning("segment %d audio file is zero bytes; timing may drift", segment.id)
 
             words = word_tokens_from_boundaries(boundaries)
             duration = words[-1].end if words else _estimate_duration(segment.text)
@@ -111,6 +112,7 @@ class TtsEngine:
         return timing
 
     def _render(self, text: str) -> tuple[bytes, list[dict]]:
+        boundary = self.tts.get("boundary", "WordBoundary")
         for attempt in range(1, 3):
             # boundary="WordBoundary" is required: the default only emits
             # SentenceBoundary, which would leave us with no per-word timing.
@@ -121,7 +123,7 @@ class TtsEngine:
                 voice=self.tts["voice"],
                 rate=self.tts["rate"],
                 pitch=self.tts["pitch"],
-                boundary="WordBoundary",
+                boundary=boundary,
             )
             try:
                 audio, boundaries = _synthesize(communicate)
@@ -132,12 +134,12 @@ class TtsEngine:
                 log.warning("tts stream failed (attempt %d): %s", attempt, exc)
         return b"", []
 
-    def _silence_mp3(self, path: Path, seconds: float = 1.0) -> bytes:
+    def _silence_mp3(self, seconds: float = 1.0) -> bytes:
         ffmpeg = shutil.which("ffmpeg")
         if ffmpeg is None:
             raise TtsError("ffmpeg not found; cannot synthesize silence fallback")
         try:
-            subprocess.run(
+            proc = subprocess.run(
                 [
                     ffmpeg,
                     "-y",
@@ -147,16 +149,16 @@ class TtsEngine:
                     "anullsrc=r=24000:cl=mono",
                     "-t",
                     f"{seconds}",
-                    "-q:a",
-                    "9",
-                    str(path),
+                    "-f",
+                    "mp3",
+                    "-",
                 ],
                 check=True,
                 capture_output=True,
             )
         except (OSError, subprocess.SubprocessError) as exc:
             raise TtsError(f"silence fallback failed: {exc}") from exc
-        return path.read_bytes()
+        return proc.stdout
 
 
 def synthesize_voiceover(manifest: StoryManifest, audio_dir) -> TimingData:

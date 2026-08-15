@@ -90,10 +90,18 @@ class VideoAssembler:
         try:
             t0 = time.perf_counter()
             for i, (img, seg) in enumerate(zip(images, timing.segments)):
-                d = min(max(seg.duration_sec, min_d), max_d)
+                # Narration drives scene length: use the real audio duration.
+                # Only pad *silent* scenes up to the minimum so the viewer has
+                # something to watch, and cap at the config safety ceiling.
+                audio_path = Path(seg.audio_path) if seg.audio_path else None
+                has_audio = audio_path is not None and audio_path.exists()
+                d = seg.duration_sec
+                if not has_audio:
+                    d = max(d, min_d)
+                d = min(d, max_d)
                 temp = out_path.parent / f"_scene_{i:03d}.mp4"
                 scene_clips.append(temp)
-                self._render_scene(img, seg.audio_path, d, i, temp)
+                self._render_scene(img, seg.audio_path, d, has_audio, i, temp)
             log.info(
                 "Stage 1: rendered %d scene clips in %.2fs",
                 len(scene_clips),
@@ -135,11 +143,11 @@ class VideoAssembler:
         img: Path,
         audio_path: str,
         d: float,
+        has_audio: bool,
         index: int,
         temp: Path,
     ) -> None:
         zoompan = self.zoompan_filter(index, d, self.fps)
-        has_audio = bool(audio_path) and Path(audio_path).exists()
         vfilter = (
             "[0:v]scale=3840:2160:force_original_aspect_ratio=increase,"
             f"crop=3840:2160,{zoompan}[v]"
@@ -215,8 +223,8 @@ class VideoAssembler:
             else:
                 cmd += ["-c:v", "copy"]
             cmd += [
-                "-c:a", "aac", "-b:a", str(v["audio_bitrate"]),
-                "-movflags", "+faststart", str(out),
+                "-c:a", "aac", "-b:a", str(v["audio_bitrate"]), "-ac", "2",
+                "-shortest", "-movflags", "+faststart", str(out),
             ]
             self._run(cmd)
         elif subtitles_vf is not None:
@@ -226,7 +234,7 @@ class VideoAssembler:
                 "-vf", subtitles_vf,
                 "-c:v", v["codec"], "-preset", v["preset"],
                 "-crf", str(v["crf"]), "-pix_fmt", "yuv420p",
-                "-c:a", "aac", "-b:a", str(v["audio_bitrate"]),
+                "-c:a", "aac", "-b:a", str(v["audio_bitrate"]), "-ac", "2",
                 "-movflags", "+faststart", str(out),
             ]
             self._run(cmd)
@@ -237,6 +245,40 @@ class VideoAssembler:
                     "-c", "copy", "-movflags", "+faststart", str(out),
                 ]
             )
+        self._validate_output(out)
+
+    def _validate_output(self, out: Path) -> None:
+        if not out.exists() or out.stat().st_size == 0:
+            raise RenderError(f"render produced no output file: {out}")
+        proc = subprocess.run(
+            [
+                "ffprobe", "-v", "error", "-select_streams", "v:0",
+                "-show_entries", "stream=codec_name,width,height",
+                "-of", "csv=p=0", str(out),
+            ],
+            capture_output=True, text=True, timeout=300,
+        )
+        if proc.returncode != 0 or not proc.stdout.strip():
+            raise RenderError(f"output validation failed, no readable video stream: {out}")
+        fields = proc.stdout.strip().split(",")
+        if len(fields) < 3 or fields[0] != "h264" or fields[1] != "1920" or fields[2] != "1080":
+            raise RenderError(
+                f"output validation failed, expected h264 1920x1080, got: {proc.stdout.strip()}"
+            )
+        log.info("output validated: %s (%s, size=%d bytes)", out, proc.stdout.strip(), out.stat().st_size)
+
+    def _resolve_font_assets(self) -> tuple[Path | None, str]:
+        font_name = str(self.video.get("font_file", "arial.ttf"))
+        search_dirs = [
+            PROJECT_ROOT / "assets" / "fonts",
+            Path("C:/Windows/Fonts"),
+            Path("/usr/share/fonts/truetype/dejavu"),
+        ]
+        for d in search_dirs:
+            candidate = d / font_name
+            if candidate.is_file():
+                return candidate.parent, candidate.stem
+        return None, "Arial"
 
     def _subtitles_filter(self, srt: Path) -> str:
         # FFmpeg 8.x parses -vf strings twice: the graph parser strips single
@@ -248,10 +290,12 @@ class VideoAssembler:
             return f"'{_escape_filter_path(path)}'"
 
         parts = [f"subtitles={val(srt)}"]
-        fontsdir = PROJECT_ROOT / "assets" / "fonts"
-        if fontsdir.is_dir():
+        fontsdir, style_font = self._resolve_font_assets()
+        if fontsdir is not None:
             parts.append(f"fontsdir={val(fontsdir)}")
-        parts.append("force_style='FontName=Arial,FontSize=20,Outline=1,Shadow=1'")
+        parts.append(
+            f"force_style='FontName={style_font},FontSize=20,Outline=1,Shadow=1'"
+        )
         return ":".join(parts)
 
     @staticmethod

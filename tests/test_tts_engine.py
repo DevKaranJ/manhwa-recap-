@@ -112,7 +112,7 @@ def test_word_tokens_skip_non_boundary_chunks():
 
 
 def test_estimate_duration_20_words():
-    assert te._estimate_duration(" ".join(["word"] * 20)) == pytest.approx(3.6)
+    assert te._estimate_duration(" ".join(["word"] * 20)) == pytest.approx(6.0)
 
 
 def test_estimate_duration_clamped():
@@ -169,7 +169,7 @@ def test_synthesize_all_retries_after_zero_audio(fake_communicate, tmp_path):
 
 def test_synthesize_all_writes_silence_after_two_failures(fake_communicate, tmp_path, monkeypatch, caplog):
     FakeCommunicate.fail_all = True
-    monkeypatch.setattr(te.TtsEngine, "_silence_mp3", lambda self, path: b"SILENCE")
+    monkeypatch.setattr(te.TtsEngine, "_silence_mp3", lambda self: b"SILENCE")
     engine = te.TtsEngine(_cfg())
     timing = te.asyncio.run(engine.synthesize_all(_manifest(), tmp_path))
 
@@ -185,7 +185,7 @@ def test_synthesize_all_writes_silence_after_two_failures(fake_communicate, tmp_
 def test_synthesize_all_raises_tts_error_when_silence_unavailable(fake_communicate, tmp_path):
     FakeCommunicate.fail_all = True
     monkeypatch = pytest.MonkeyPatch()
-    monkeypatch.setattr(te.TtsEngine, "_silence_mp3", lambda self, path: (_ for _ in ()).throw(te.TtsError("no silence")))
+    monkeypatch.setattr(te.TtsEngine, "_silence_mp3", lambda self: (_ for _ in ()).throw(te.TtsError("no silence")))
     engine = te.TtsEngine(_cfg())
     with pytest.raises(te.TtsError):
         te.asyncio.run(engine.synthesize_all(_manifest(), tmp_path))

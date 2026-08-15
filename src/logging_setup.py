@@ -17,3 +17,11 @@ def setup_logging(level: int = logging.INFO) -> None:
 def get_logger(name: str) -> logging.Logger:
     setup_logging()
     return logging.getLogger(name)
+
+
+def set_verbose(level: int = logging.DEBUG) -> None:
+    setup_logging()
+    logger = logging.getLogger("nove")
+    logger.setLevel(level)
+    for handler in logger.handlers:
+        handler.setLevel(level)

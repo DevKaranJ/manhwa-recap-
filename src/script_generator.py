@@ -38,6 +38,9 @@ class _ManifestResponse(BaseModel):
 
 _SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
 
+_SECONDS_PER_WORD = 0.30  # measured edge-tts pace (~2.5-3 words/sec)
+_MAX_PROMPT_CHARS = 200
+
 _SYSTEM_PROMPT = (
     "You write immersive first-person narration for an anime-style recap video. "
     'Return ONLY a JSON object matching exactly this schema: {"title": str, "premise": str, '
@@ -56,8 +59,11 @@ def _utc_now() -> str:
 
 def default_visual_prompt(segment_text: str, title: str) -> str:
     text = " ".join(segment_text.split())
+    keywords = text
+    if len(keywords) > _MAX_PROMPT_CHARS:
+        keywords = keywords[:_MAX_PROMPT_CHARS].rsplit(" ", 1)[0] + "…"
     return (
-        f"anime-style scene illustration for '{title}': {text} — "
+        f"anime-style scene illustration for '{title}': {keywords} — "
         "cinematic lighting, rich color, no text or captions in the image"
     )
 
@@ -91,7 +97,7 @@ def build_deterministic_manifest(text: str, title: str | None = None) -> StoryMa
     segments: list[Segment] = []
     for group in _group_sentences(sentences):
         word_count = len(group.split())
-        duration = min(max(word_count * 0.18, 3.0), 12.0)
+        duration = min(max(word_count * _SECONDS_PER_WORD, 3.0), 12.0)
         segments.append(
             Segment(
                 id=len(segments) + 1,
@@ -165,7 +171,7 @@ class ScriptGenerator:
         temperature = llm.get("temperature", 0.8)
         max_tokens = llm.get("max_tokens", 2048)
         timeout_sec = llm.get("timeout_sec", 60)
-        retry_delays = llm.get("retry_delays") or [2.0, 4.0]
+        retry_delays = llm.get("retry_delays") or [1.0, 2.0, 4.0]
 
         last_error = "no LLM models configured"
         for model in models:
@@ -224,7 +230,7 @@ class ScriptGenerator:
             ],
         }
         resp = requests.post(url, headers=headers, json=body, timeout=timeout_sec)
-        if resp.status_code >= 500:
+        if resp.status_code in (429, 500, 502, 503, 504):
             raise _RetryableError(
                 f"LLM request failed with HTTP {resp.status_code}: {resp.text[:300]}"
             )

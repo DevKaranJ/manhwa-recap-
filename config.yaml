@@ -6,12 +6,14 @@ llm:
   temperature: 0.8
   max_tokens: 8192
   timeout_sec: 90
+  retry_delays: [1, 2, 4]         # exponential backoff (s) on 429/5xx per model
 
 tts:
   engine: edge-tts                # edge-tts | openrouter
   voice: en-US-ChristopherNeural
   rate: "+0%"
   pitch: "-2Hz"
+  boundary: WordBoundary          # edge-tts word timing mode
   openrouter_model: deepgram/flux-tts:free
 
 image:
@@ -20,9 +22,13 @@ image:
   width: 1920
   height: 1080
   model: flux
+  fallback_models: [turbo, sdxl]  # tried with new seeds if the primary model fails
   nologo: true
   seed: 42
   timeout_sec: 180
+  hf_base_url: https://api-inference.huggingface.co
+  hf_model: black-forest-labs/FLUX.1-schnell
+  hf_api_key_env: HF_API_KEY      # optional; enables Hugging Face Serverless fallback
 
 video:
   fps: 24
@@ -33,7 +39,7 @@ video:
   bgm_volume_db: -24
   duck_db: 10
   min_scene_sec: 3
-  max_scene_sec: 12
+  max_scene_sec: 60               # safety cap only; narration drives scene length
   burn_subtitles: false
   font_file: arial.ttf
 
